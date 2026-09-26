@@ -1,0 +1,17 @@
+{
+  "name": "torchatto",
+  "version": "1.0.0",
+  "description": "TorChatto - direct Tor hidden-service chat between two phones",
+  "private": true,
+  "scripts": {
+    "sync": "npx cap sync android",
+    "open:android": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/core": "6.1.0",
+    "@capacitor/android": "6.1.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "6.1.0"
+  }
+}

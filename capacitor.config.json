@@ -1,0 +1,9 @@
+{
+  "appId": "com.torchat.app",
+  "appName": "TorChatto",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": false
+  }
+}

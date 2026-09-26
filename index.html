@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>TorChatto</title>
+<style>
+  :root{
+    --bg:#0b141a; --bar:#1f2c34; --bubble-me:#005c4b; --bubble-them:#1f2c34;
+    --text:#e9edef; --muted:#8696a0; --accent:#00a884;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,Roboto,Segoe UI,Helvetica,Arial,sans-serif;}
+  #app{display:flex;flex-direction:column;height:100%;}
+
+  #topbar{background:var(--bar);padding:10px;display:flex;gap:6px;
+    padding-top:calc(10px + env(safe-area-inset-top,0px));}
+  #topbar input{flex:1;background:#111b21;border:1px solid #2a3942;color:var(--text);
+    border-radius:8px;padding:10px;font-size:14px;}
+  #topbar button{background:var(--accent);border:none;color:#04231d;font-weight:600;
+    border-radius:8px;padding:0 14px;font-size:14px;}
+
+  #mylink{background:#111b21;color:var(--muted);padding:8px 12px;font-size:12px;
+    word-break:break-all;display:flex;justify-content:space-between;align-items:center;gap:8px;}
+  #mylink span{flex:1;}
+  #mylink small{color:var(--accent);white-space:nowrap;}
+
+  #status{padding:4px 12px;font-size:11px;color:var(--muted);background:#111b21;}
+
+  #chat{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:6px;
+    background-image:linear-gradient(#0b141a,#0b141a);}
+  .bubble{max-width:78%;padding:8px 10px;border-radius:10px;font-size:14px;line-height:1.35;
+    white-space:pre-wrap;word-break:break-word;position:relative;}
+  .me{align-self:flex-end;background:var(--bubble-me);border-bottom-right-radius:2px;}
+  .them{align-self:flex-start;background:var(--bubble-them);border-bottom-left-radius:2px;}
+  .sys{align-self:center;color:var(--muted);font-size:12px;background:transparent;}
+  .meta{font-size:10px;color:#9fd8cd;text-align:right;margin-top:2px;}
+
+  #bottombar{display:flex;gap:6px;padding:8px;background:var(--bar);
+    padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));}
+  #msgInput{flex:1;background:#2a3942;border:none;color:var(--text);border-radius:20px;
+    padding:12px 14px;font-size:14px;}
+  #sendBtn{background:var(--accent);border:none;border-radius:50%;width:44px;height:44px;
+    color:#04231d;font-size:18px;}
+
+  ::-webkit-scrollbar{width:0;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="topbar">
+    <input id="peerInput" placeholder="Paste other phone link (xxx.onion#abc)" autocapitalize="off" autocorrect="off" />
+    <button id="connectBtn">Connect</button>
+  </div>
+
+  <div id="mylink">
+    <span id="myLinkText">My Link: starting Tor…</span>
+    <small id="copyHint">tap to copy</small>
+  </div>
+  <div id="status">Tor: initializing…</div>
+
+  <div id="chat"></div>
+
+  <div id="bottombar">
+    <input id="msgInput" placeholder="Message" />
+    <button id="sendBtn">➤</button>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  var chatEl = document.getElementById('chat');
+  var myLinkEl = document.getElementById('myLinkText');
+  var statusEl = document.getElementById('status');
+  var peerInput = document.getElementById('peerInput');
+  var msgInput = document.getElementById('msgInput');
+  var connectBtn = document.getElementById('connectBtn');
+  var sendBtn = document.getElementById('sendBtn');
+
+  var myOnion = null;
+  var myHash = null;
+  var connected = false;
+
+  function addBubble(text, cls) {
+    var b = document.createElement('div');
+    b.className = 'bubble ' + cls;
+    b.textContent = text;
+    chatEl.appendChild(b);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+
+  function setStatus(text) {
+    statusEl.textContent = text;
+  }
+
+  function hasCapacitor() {
+    return !!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.TorChat);
+  }
+
+  function getPlugin() {
+    return window.Capacitor.Plugins.TorChat;
+  }
+
+  // --- boot ---
+  function boot() {
+    if (!hasCapacitor()) {
+      myLinkEl.textContent = 'My Link: (open inside the Android app, not a browser)';
+      setStatus('Tor: unavailable outside the app');
+      addBubble('This chat only works inside the TorChatto Android app — Tor cannot run in a plain browser tab.', 'sys');
+      return;
+    }
+
+    var TorChat = getPlugin();
+
+    TorChat.addListener('message', function (data) {
+      addBubble(data.text, 'them');
+    });
+
+    TorChat.addListener('torStatus', function (data) {
+      setStatus('Tor: ' + data.status);
+    });
+
+    TorChat.addListener('peerConnected', function () {
+      connected = true;
+      addBubble('Connected to peer.', 'sys');
+    });
+
+    TorChat.addListener('peerDisconnected', function () {
+      connected = false;
+      addBubble('Peer disconnected.', 'sys');
+    });
+
+    setStatus('Tor: starting (this can take 15-60s on first run)…');
+    TorChat.startTor().then(function (res) {
+      myOnion = res.onion;
+      myHash = res.hash;
+      myLinkEl.textContent = 'My Link: ' + myOnion + '#' + myHash;
+      setStatus('Tor: ready');
+    }).catch(function (err) {
+      setStatus('Tor: failed to start — ' + (err && err.message ? err.message : err));
+    });
+  }
+
+  myLinkEl.parentElement.addEventListener('click', function () {
+    if (!myOnion) return;
+    var full = myOnion + '#' + myHash;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(full);
+    }
+    var old = myLinkEl.textContent;
+    myLinkEl.textContent = 'Copied!';
+    setTimeout(function () { myLinkEl.textContent = old; }, 900);
+  });
+
+  connectBtn.addEventListener('click', function () {
+    var raw = peerInput.value.trim();
+    if (!raw) return;
+    var parts = raw.split('#');
+    if (parts.length !== 2 || !parts[0].endsWith('.onion')) {
+      addBubble('Bad link format. Expected xxxxxxx.onion#hash', 'sys');
+      return;
+    }
+    var onion = parts[0];
+    var hash = parts[1];
+
+    if (!hasCapacitor()) return;
+    setStatus('Tor: connecting to ' + onion + '…');
+    getPlugin().connect({ onion: onion, hash: hash }).then(function () {
+      connected = true;
+      setStatus('Tor: connected to peer');
+      addBubble('Connected to ' + onion, 'sys');
+    }).catch(function (err) {
+      setStatus('Tor: connect failed');
+      addBubble('Connect failed: ' + (err && err.message ? err.message : err), 'sys');
+    });
+  });
+
+  function doSend() {
+    var text = msgInput.value;
+    if (!text.trim()) return;
+    if (!hasCapacitor()) return;
+    if (!connected) {
+      addBubble('Not connected to a peer yet.', 'sys');
+      return;
+    }
+    getPlugin().send({ text: text }).then(function () {
+      addBubble(text, 'me');
+      msgInput.value = '';
+    }).catch(function (err) {
+      addBubble('Send failed: ' + (err && err.message ? err.message : err), 'sys');
+    });
+  }
+
+  sendBtn.addEventListener('click', doSend);
+  msgInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') doSend();
+  });
+
+  document.addEventListener('deviceready', boot);
+  // Fallback in case deviceready never fires (some Capacitor setups don't emit it)
+  if (window.Capacitor) {
+    setTimeout(boot, 300);
+  }
+})();
+</script>
+</body>
+</html>
