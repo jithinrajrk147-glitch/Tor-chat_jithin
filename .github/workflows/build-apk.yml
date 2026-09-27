@@ -11,13 +11,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - uses: actions/setup-java@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
@@ -25,32 +28,38 @@ jobs:
       - name: Install JS deps
         run: npm install
 
-      - name: Preserve native plugin
-        run: |
-          mkdir -p /tmp/torchatto-native-src
-          cp -r android/app/src/main/java/com/torchat /tmp/torchatto-native-src/ || true
-
       - name: Add Android platform
         run: npx cap add android
 
-      - name: Restore plugin sources
+      - name: Copy TorPlugin to Android package
+        shell: bash
         run: |
           mkdir -p android/app/src/main/java/com/torchat
-          cp -f /tmp/torchatto-native-src/com/torchat/*.java android/app/src/main/java/com/torchat/ || true
+          cp TorPlugin.java android/app/src/main/java/com/torchat/
+          echo "Copied TorPlugin.java to android/app/src/main/java/com/torchat/"
 
       - name: Sync web assets
         run: npx cap sync android
 
-      - name: Wire TorPlugin
+      - name: Wire TorPlugin into MainActivity
+        shell: bash
         run: |
-          GEN_MAIN=$(find android/app/src/main/java -name MainActivity.java | head -n1)
-          echo "MainActivity at: $GEN_MAIN"
-          GEN_PKG=$(grep -m1 '^package ' "$GEN_MAIN" | sed 's/package //; s/;//')
-          cat > "$GEN_MAIN" <<EOF
-          package ${GEN_PKG};
+          GEN_MAIN=$(find android/app/src/main/java -name MainActivity.java | head -n 1)
+          if [ -z "$GEN_MAIN" ]; then
+            echo "ERROR: MainActivity.java not found"
+            exit 1
+          fi
+          echo "Found MainActivity at: $GEN_MAIN"
+          
+          GEN_PKG=$(grep -m1 '^package ' "$GEN_MAIN" | sed 's/^package //; s/;//')
+          echo "Package: $GEN_PKG"
+          
+          cat > "$GEN_MAIN" <<'EOF'
+          package ${PKG_NAME};
           import android.os.Bundle;
           import com.getcapacitor.BridgeActivity;
           import com.torchat.TorPlugin;
+          
           public class MainActivity extends BridgeActivity {
               @Override
               public void onCreate(Bundle savedInstanceState) {
@@ -59,44 +68,60 @@ jobs:
               }
           }
           EOF
+          
+          sed -i "s/\${PKG_NAME}/${GEN_PKG}/g" "$GEN_MAIN"
+          echo "MainActivity updated with TorPlugin registration"
 
       - name: Add tor-android dependency
+        shell: bash
         run: |
-          python3 << 'PYEOF'
+          python3 <<'PYEOF'
           import pathlib
+          
           repo_line = "        maven { url 'https://raw.githubusercontent.com/guardianproject/gpmaven/master' }\n"
-          dep_lines = "    implementation 'info.guardianproject:tor-android:0.4.8.11'\n    implementation 'info.guardianproject:jtorctl:0.4.5.7'\n"
-          patched=False
-          for path in ["settings.gradle", "android/build.gradle"]:
-              p=pathlib.Path(path)
-              if not p.exists(): continue
-              text=p.read_text()
+          dep_lines = (
+              "    implementation 'info.guardianproject:tor-android:0.4.8.11'\n"
+              "    implementation 'info.guardianproject:jtorctl:0.4.5.7'\n"
+          )
+          
+          patched = False
+          for rel in ["settings.gradle", "android/build.gradle"]:
+              p = pathlib.Path(rel)
+              if not p.exists():
+                  continue
+              text = p.read_text()
               if "gpmaven" in text:
-                  patched=True; break
+                  patched = True
+                  break
               if "mavenCentral()" in text:
-                  text=text.replace("mavenCentral()", "mavenCentral()\n"+repo_line, 1)
-                  p.write_text(text); patched=True; break
+                  text = text.replace("mavenCentral()", "mavenCentral()\n" + repo_line, 1)
+                  p.write_text(text)
+                  patched = True
+                  break
+          
           if not patched:
-              p=pathlib.Path("android/build.gradle")
-              existing=p.read_text() if p.exists() else ""
-              existing+="\nallprojects {\n    repositories {\n"+repo_line+"    }\n}\n"
+              p = pathlib.Path("android/build.gradle")
+              existing = p.read_text() if p.exists() else ""
+              existing += "\nallprojects {\n    repositories {\n" + repo_line + "    }\n}\n"
               p.write_text(existing)
-          app_gradle=pathlib.Path("android/app/build.gradle")
-          text=app_gradle.read_text()
+          
+          app_gradle = pathlib.Path("android/app/build.gradle")
+          text = app_gradle.read_text()
           if "tor-android" not in text:
               if "dependencies {" in text:
-                  text=text.replace("dependencies {", "dependencies {\n"+dep_lines, 1)
+                  text = text.replace("dependencies {", "dependencies {\n" + dep_lines, 1)
               else:
-                  text+="\ndependencies {\n"+dep_lines+"}\n"
+                  text += "\ndependencies {\n" + dep_lines + "}\n"
               app_gradle.write_text(text)
           PYEOF
 
       - name: Ensure INTERNET permission
+        shell: bash
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
+          if [ -f "$MANIFEST" ] && ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
             sed -i 's#<manifest #<manifest xmlns:tools="http://schemas.android.com/tools" #' "$MANIFEST" || true
-            sed -i '0,/<application/s##<uses-permission android:name="android.permission.INTERNET" \/>\n\n    <application#' "$MANIFEST"
+            sed -i '0,/<application/s#<application#<uses-permission android:name="android.permission.INTERNET" />\n\n    <application#' "$MANIFEST" || true
           fi
 
       - name: Build debug APK
